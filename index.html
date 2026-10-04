@@ -168,9 +168,33 @@ const Snd = (() => {
     if (!unlocked) {
       try { const b = ac.createBuffer(1, 1, 22050), s = ac.createBufferSource(); s.buffer = b; s.connect(ac.destination); s.start(0); } catch (e) {}
       unlocked = true;
+      unlockEls();
       loadFiles();
     }
     return ac;
+  }
+  const els = {};           // slot -> [HTMLAudioElement] (надійніше в Safari на iPhone)
+  function unlockEls() {
+    Object.keys(SOUND_FILES).forEach(name => {
+      const src = SOUND_FILES[name]; if (!src) return;
+      (Array.isArray(src) ? src : [src]).forEach(u => {
+        try {
+          const el = new Audio(u); el.preload = 'auto'; el.setAttribute('playsinline', ''); el.muted = true;
+          const p = el.play();
+          const done = () => { try { el.pause(); el.currentTime = 0; } catch (e) {} el.muted = false; };
+          if (p && p.then) p.then(done).catch(done); else done();
+          (els[name] = els[name] || []).push(el);
+        } catch (e) {}
+      });
+    });
+  }
+  function playEl(name, vol) {
+    let n = name, l = els[n];
+    while ((!l || !l.length) && SOUND_FALLBACK[n]) { n = SOUND_FALLBACK[n]; l = els[n]; }
+    if (!l || !l.length) return false;
+    const el = l[Math.floor(Math.random() * l.length)];
+    try { el.muted = false; el.volume = Math.min(1, vol); el.currentTime = 0; const p = el.play(); if (p && p.catch) p.catch(e => { console.warn('el play', e); playWa(name, vol); }); } catch (e) { return false; }
+    return true;
   }
   function decode(ab) { return new Promise((res, rej) => { try { const p = ac.decodeAudioData(ab, res, rej); if (p && p.catch) p.catch(rej); } catch (e) { rej(e); } }); }
   async function fetchBuf(url) {
@@ -244,8 +268,13 @@ const Snd = (() => {
     timer_warning: () => tone(880, 880, .1, 'square', .07),
   };
   function play(name, vol = 1) {
+    if (muted) return;
+    if (playEl(name, vol)) return;
+    playWa(name, vol);
+  }
+  function playWa(name, vol = 1) {
     if (muted || !ac) return;
-    if (ac.state !== 'running') { if (ac.resume) ac.resume().then(() => play(name, vol)).catch(() => {}); return; }
+    if (ac.state !== 'running') { if (ac.resume) ac.resume().then(() => playWa(name, vol)).catch(() => {}); return; }
     try {
       let n = name, b = buffers[n];
       while ((!b || !b.length) && SOUND_FALLBACK[n]) { n = SOUND_FALLBACK[n]; b = buffers[n]; }
@@ -259,7 +288,7 @@ const Snd = (() => {
     ensure, play,
     get muted() { return muted; },
     toggle() { muted = !muted; try { localStorage.setItem('kolya.muted', muted ? '1' : '0'); } catch (e) {} return muted; },
-    debug: () => ({ state: ac && ac.state, loaded: Object.assign({}, loaded) }),
+    debug: () => ({ state: ac && ac.state, loaded: Object.assign({}, loaded), els: Object.keys(els) }),
   };
 })();
 
@@ -927,8 +956,8 @@ function menu() {
   showScreen(`<canvas class="portrait"></canvas><h1>Як дістати<br>Колю Лемака</h1><p class="sub">Пригоди в нашій общазі</p>
   <p>Коля — головний «BOSS» гуртожитку. Час показати, хто тут насправді головний 😏</p>
   <div class="btns"><button class="btn" data-act="play">Грати</button>${cont}<button class="btn sec" data-act="rules">Правила</button></div>
-  <p class="sub" style="margin-top:12px">Рекорд: <b>${best}</b> · Звук: <button class="btn sec" style="padding:4px 10px;font-size:13px" data-act="snd">${Snd.muted ? '🔇 вимкнено' : '🔊 увімкнено'}</button></p>`,
-    { play: () => { G.score = 0; levelIntro(0); }, cont: () => { G.score = 0; levelIntro(maxLevel); }, rules, snd: () => { Snd.toggle(); updSndBtn(); menu(); } });
+  <p class="sub" style="margin-top:12px">Рекорд: <b>${best}</b> · Звук: <button class="btn sec" style="padding:4px 10px;font-size:13px" data-act="snd">${Snd.muted ? '🔇 вимкнено' : '🔊 увімкнено'}</button> <button class="btn sec" style="padding:4px 10px;font-size:13px" data-act="vtest">🎤 Голос Колі</button></p>`,
+    { play: () => { G.score = 0; levelIntro(0); }, cont: () => { G.score = 0; levelIntro(maxLevel); }, rules, snd: () => { Snd.toggle(); updSndBtn(); menu(); }, vtest: () => setTimeout(() => Snd.play('kolya_scream'), 150) });
 }
 function rules() { const back = G.mode; showScreen(RULES_HTML + '<div class="btns"><button class="btn" data-act="back">Зрозуміло!</button></div>', { back: () => back === 'paused' ? pauseScreen() : menu() }); }
 function levelIntro(i) {
